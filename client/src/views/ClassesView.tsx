@@ -47,6 +47,9 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  const [availableLoaded, setAvailableLoaded] = useState(false);
+  const [unavailableItems, setUnavailableItems] = useState<Record<string, ContentItem>>({});
+
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isJoinModalOpen, setIsJoinModalOpen] = useState(false);
@@ -72,13 +75,18 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
   useEffect(() => {
     if (!selectedClass) {
       setAvailableVideos([]);
+      setAvailableLoaded(false);
       return;
     }
 
     let active = true;
+    setAvailableLoaded(false);
     api.getContent({ scope: 'all' })
       .then((items) => {
-        if (active) setAvailableVideos(items);
+        if (active) {
+          setAvailableVideos(items);
+          setAvailableLoaded(true);
+        }
       })
       .catch((err: any) => {
         if (active) setClassActionError(err?.message || 'לא ניתן לטעון סרטונים לכיתה');
@@ -87,6 +95,45 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
       active = false;
     };
   }, [selectedClass?.id]);
+
+    // Class items that are not in the library anymore: ask the server.
+  // For deleted videos it returns a placeholder with status "deleted".
+  useEffect(() => {
+    if (!selectedClass || !availableLoaded) return;
+
+    const missing = selectedClass.content_ids.filter(
+      (contentId) =>
+        !availableVideos.some(
+          (c) => c.id === contentId || `lib-${c.video.id}` === contentId
+        )
+    );
+    if (missing.length === 0) {
+      setUnavailableItems({});
+      return;
+    }
+
+    let active = true;
+    Promise.all(
+      missing.map(async (contentId) => {
+        try {
+          return [contentId, await api.getContentItem(contentId)] as const;
+        } catch {
+          return null;
+        }
+      })
+    ).then((results) => {
+      if (!active) return;
+      const map: Record<string, ContentItem> = {};
+      results.forEach((r) => {
+        if (r && r[1].video.status === 'deleted') map[r[0]] = r[1];
+      });
+      setUnavailableItems(map);
+    });
+
+    return () => {
+      active = false;
+    };
+  }, [selectedClass?.content_ids.join(','), availableVideos, availableLoaded]);
 
   const fetchClasses = async () => {
     setIsLoading(true);
@@ -238,14 +285,36 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     }
   };
 
-  const classVideos = selectedClass
+    const handleReuploadVideo = async (youtubeId: string) => {
+    if (!selectedClass) return;
+    setIsUpdatingClass(true);
+    setClassActionError(null);
+    setClassActionMessage(null);
+    try {
+      // The server reuses the old video id, so the class reference works again.
+      await api.addContent(youtubeId);
+      const items = await api.getContent({ scope: 'all' });
+      setAvailableVideos(items);
+      await loadClassDetails(selectedClass.id);
+      setClassActionMessage('הסרטון הועלה מחדש ועובר עיבוד.');
+    } catch (err: any) {
+      setClassActionError(err?.message || 'לא ניתן להעלות את הסרטון מחדש');
+    } finally {
+      setIsUpdatingClass(false);
+    }
+  };
+
+     const classVideos = selectedClass
     ? selectedClass.content_ids.flatMap((contentId) => {
         const item = availableVideos.find((candidate) =>
           candidate.id === contentId || `lib-${candidate.video.id}` === contentId
         );
-        return item ? [{ contentId, item }] : [];
+        if (item) return [{ contentId, item, unavailable: false }];
+        const gone = unavailableItems[contentId];
+        return gone ? [{ contentId, item: gone, unavailable: true }] : [];
       })
     : [];
+
   const availableToAdd = selectedClass
     ? availableVideos.filter((item) =>
         !selectedClass.content_ids.includes(item.id) &&
@@ -485,27 +554,46 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
                         <p className="text-sm text-slate-400">עדיין לא נוספו סרטונים לכיתה.</p>
                       ) : (
                         <ul className="space-y-2">
-                          {classVideos.map(({ contentId, item }) => (
+                                                    {classVideos.map(({ contentId, item, unavailable }) => (
                             <li key={contentId} className="flex items-center justify-between gap-3 rounded-xl bg-slate-950 border border-slate-800 px-4 py-3">
-                              <button
-                                type="button"
-                                onClick={() => onWatchVideo({ ...item, id: `lib-${item.video.id}` })}
-                                className="text-sm text-right text-slate-200 hover:text-indigo-300"
-                              >
-                                {item.video.title}
-                              </button>
-                              {selectedClass.owner_id === currentUserId && (
+                              {unavailable ? (
+                                <div className="text-right">
+                                  <p className="text-sm text-slate-400 line-through">{item.video.title}</p>
+                                  <p className="text-xs text-amber-300">הסרטון אינו זמין עקב מחיקה</p>
+                                </div>
+                              ) : (
                                 <button
                                   type="button"
-                                  onClick={() => handleRemoveVideo(contentId)}
-                                  disabled={isUpdatingClass}
-                                  className="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 disabled:opacity-50"
-                                  title="הסר סרטון מהכיתה"
-                                  aria-label={`הסר את ${item.video.title} מהכיתה`}
+                                  onClick={() => onWatchVideo({ ...item, id: `lib-${item.video.id}` })}
+                                  className="text-sm text-right text-slate-200 hover:text-indigo-300"
                                 >
-                                  <Trash2 className="w-4 h-4" />
+                                  {item.video.title}
                                 </button>
                               )}
+                              <div className="flex items-center gap-2">
+                                {unavailable && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleReuploadVideo(item.video.youtube_id)}
+                                    disabled={isUpdatingClass}
+                                    className="px-3 py-1.5 rounded-lg text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 disabled:opacity-50"
+                                  >
+                                    העלה מחדש
+                                  </button>
+                                )}
+                                {selectedClass.owner_id === currentUserId && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveVideo(contentId)}
+                                    disabled={isUpdatingClass}
+                                    className="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 disabled:opacity-50"
+                                    title="הסר סרטון מהכיתה"
+                                    aria-label={`הסר את ${item.video.title} מהכיתה`}
+                                  >
+                                    <Trash2 className="w-4 h-4" />
+                                  </button>
+                                )}
+                              </div>
                             </li>
                           ))}
                         </ul>
@@ -527,19 +615,38 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
                       <p className="text-sm text-slate-400">עדיין לא נוספו סרטונים לכיתה.</p>
                     ) : (
                       <ul className="space-y-2">
-                        {classVideos.map(({ item }) => (
-                          <li key={item.video.id} className="rounded-xl bg-slate-950 border border-slate-800 px-4 py-3">
-                            <button
-                              type="button"
-                              onClick={() => onWatchVideo({ ...item, id: `lib-${item.video.id}` })}
-                              className="text-sm text-right text-slate-200 hover:text-indigo-300"
-                            >
-                              {item.video.title}
-                            </button>
+                        {classVideos.map(({ contentId, item, unavailable }) => (
+                          <li key={contentId} className="flex items-center justify-between gap-3 rounded-xl bg-slate-950 border border-slate-800 px-4 py-3">
+                            {unavailable ? (
+                              <div className="text-right">
+                                <p className="text-sm text-slate-400 line-through">{item.video.title}</p>
+                                <p className="text-xs text-amber-300">הסרטון אינו זמין עקב מחיקה</p>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => onWatchVideo({ ...item, id: `lib-${item.video.id}` })}
+                                className="text-sm text-right text-slate-200 hover:text-indigo-300"
+                              >
+                                {item.video.title}
+                              </button>
+                            )}
+                            {unavailable && (
+                              <button
+                                type="button"
+                                onClick={() => handleReuploadVideo(item.video.youtube_id)}
+                                disabled={isUpdatingClass}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 disabled:opacity-50"
+                              >
+                                העלה מחדש
+                              </button>
+                            )}
                           </li>
                         ))}
                       </ul>
                     )}
+                    {classActionError && <p role="alert" className="text-sm text-rose-300">{classActionError}</p>}
+                    {classActionMessage && <p role="status" className="text-sm text-emerald-300">{classActionMessage}</p>}
                   </div>
                 )}
 

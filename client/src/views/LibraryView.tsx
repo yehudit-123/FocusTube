@@ -70,6 +70,10 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onWatchVideo }) => {
     );
   };
 
+    const handleVideoDeleted = (videoId: string) => {
+    setItems((prev) => prev.filter((it) => it.video.id !== videoId));
+  };
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fade-in">
       {/* Hero Banner / Header */}
@@ -178,6 +182,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onWatchVideo }) => {
               onWatch={onWatchVideo}
               onVideoUpdated={handleVideoUpdated}
               showDelete={false}
+              onVideoDeleted={handleVideoDeleted}
             />
           ))}
         </div>

@@ -310,12 +310,18 @@ async def add_video_to_class(
     if not class_doc:
         raise HTTPException(status_code=404, detail={"message": "לא נמצא"})
 
-    content_is_owned = await db.content.find_one({"id": req.content_id, "user_id": user_id})
-    if not content_is_owned and req.content_id.startswith("lib-"):
+    content_doc = await db.content.find_one({"id": req.content_id, "user_id": user_id})
+    if content_doc:
+        video_id = content_doc["video_id"]
+    elif req.content_id.startswith("lib-"):
         video_id = req.content_id.removeprefix("lib-")
-        content_is_owned = await db.videos.find_one({"id": video_id})
-    if not content_is_owned:
+    else:
+        video_id = None
+
+    video = await db.videos.find_one({"id": video_id}) if video_id else None
+    if not video:
         raise HTTPException(status_code=404, detail={"message": "הסרטון לא נמצא בספרייה שלך"})
+    
 
     await db.classes.update_one(
         {"id": class_id},

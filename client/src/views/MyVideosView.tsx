@@ -49,7 +49,18 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onWatchVideo }) => {
       prev.map((it) => (it.video.id === updatedVideo.id ? { ...it, video: updatedVideo } : it))
     );
   };
-
+  // After a permanent delete of a flawed video: reload the list quietly.
+  // The server either removed the user's link (item disappears) or
+  // keeps it, in which case it comes back as an "unavailable" item.
+  const refreshMyVideosQuietly = async () => {
+    try {
+      const data = await api.getContent({ scope: 'mine' });
+      setItems(data);
+    } catch (err: any) {
+      setError(err?.message || 'אירעה שגיאה בטעינת הסרטונים האישיים');
+    }
+  };
+  
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fade-in">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-800 pb-6">
@@ -110,6 +121,7 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onWatchVideo }) => {
               onDelete={handleVideoDeleted}
               onVideoUpdated={handleVideoUpdated}
               showDelete={true}
+              onVideoDeleted={refreshMyVideosQuietly}
             />
           ))}
         </div>
