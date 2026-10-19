@@ -1,0 +1,23 @@
+node_modules/
+dist/
+build/
+coverage/
+.DS_Store
+*.log
+.env
+.env.local
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.pytest_cache/
+venv/
+.venv/
+
+docker-compose.override.yml
+server/Dockerfile.local
+server/certs/*
+!server/certs/.gitkeep

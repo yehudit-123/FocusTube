@@ -1,0 +1,70 @@
+
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: FocusTube_mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - FocusTube_net
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: FocusTube_server
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      - MONGO_URL=mongodb://mongo:27017/FocusTube
+      - SECRET_JWT=${SECRET_JWT:-FocusTube_super_secret_jwt_key_2026_dev_secure}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3.8-flash}
+    depends_on:
+      mongo:
+        condition: service_healthy
+    networks:
+      - FocusTube_net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+        - VITE_MODEL_VERSION=${VITE_MODEL_VERSION:-v4_2}
+    container_name: FocusTube_client
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+      - VITE_MODEL_VERSION=${VITE_MODEL_VERSION:-v4_2}
+    depends_on:
+      - server
+    networks:
+      - FocusTube_net
+
+volumes:
+  mongo_data:
+    name: FocusTube_mongo_data
+
+networks:
+  FocusTube_net:
+    driver: bridge
