@@ -1,6 +1,0 @@
-{
-  "name": "FocusTube - מיקוד ולמידה",
-  "description": "סביבת למידה חכמה למדידת ריכוז באמצעות מצלמת רשת במהלך צפייה בסרטוני יוטיוב, עצירה אוטומטית ומענה על שאלות הבנה מותאמות אישית.",
-  "requestFramePermissions": ["camera"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
