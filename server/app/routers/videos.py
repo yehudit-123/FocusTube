@@ -72,3 +72,53 @@ async def get_video(
     if not video:
         raise HTTPException(status_code=404, detail={"message": "לא נמצא"})
     return VideoModel(**video)
+
+@router.delete("/{video_id}")
+async def delete_failed_video(
+    video_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Permanently delete a flawed video. Allowed only if the user is linked to
+    the video AND its status is 'questions_failed'. A tombstone is kept."""
+    db = get_db()
+    if db is None:
+        raise HTTPException(status_code=503, detail={"message": "שירות מסד הנתונים אינו זמין"})
+
+    user_id = current_user["id"]
+
+    # 1. The user must be linked to the video, otherwise 404 (no info leak).
+    link = await db.content.find_one({"user_id": user_id, "video_id": video_id})
+    if not link:
+        raise HTTPException(status_code=404, detail={"message": "לא נמצא"})
+
+    video = await db.videos.find_one({"id": video_id})
+    if not video:
+        raise HTTPException(status_code=404, detail={"message": "לא נמצא"})
+
+    # 2. Atomic delete: the status is checked inside the query itself, so a
+    #    'ready' or 'processing' video can never be deleted (even by a race).
+    result = await db.videos.delete_one({"id": video_id, "status": "questions_failed"})
+    if result.deleted_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"message": "ניתן למחוק רק סרטון פגום"}
+        )
+
+    # 3. Leave a tombstone so classes and other users can show "unavailable".
+    await db.deleted_videos.update_one(
+        {"youtube_id": video["youtube_id"]},
+        {"$set": {
+            "video_id": video_id,
+            "youtube_id": video["youtube_id"],
+            "title": video.get("title", ""),
+            "deleted_by": user_id,
+            "deleted_at": datetime.now(timezone.utc),
+        }},
+        upsert=True,
+    )
+
+    # 4. Remove the deleter's own link. Classes reference the video by
+    #    "lib-<video_id>", which is resolved through the tombstone.
+    await db.content.delete_one({"id": link["id"]})
+
+    return {"message": "הסרטון נמחק מהמאגר"}

@@ -33,7 +33,7 @@ export interface Video {
   duration_seconds: number;
   categories: string[];
   segments: VideoSegment[];
-  status: 'ready' | 'processing' | 'questions_failed';
+  status: 'ready' | 'processing' | 'deleted' | 'questions_failed';
   failure_reason?: 'no_api_key' | 'invalid_api_key' | 'gemini_unavailable' | 'no_transcript' | 'invalid_ai_response' | null;
   processed_at?: string;
   created_at: string;

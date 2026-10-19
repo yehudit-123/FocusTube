@@ -12,6 +12,7 @@ interface VideoCardProps {
   onWatch: (item: ContentItem) => void;
   onDelete?: (contentId: string) => void;
   onVideoUpdated?: (updatedVideo: Video) => void;
+  onVideoDeleted?: (videoId: string) => void;
   showDelete?: boolean;
 }
 
@@ -19,6 +20,7 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   contentItem,
   onWatch,
   onDelete,
+  onVideoDeleted,
   onVideoUpdated,
   showDelete = false,
 }) => {
@@ -29,6 +31,9 @@ export const VideoCard: React.FC<VideoCardProps> = ({
   const [now, setNow] = useState(Date.now());
   const [isDeleting, setIsDeleting] = useState(false);
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
+  const [isDeletingVideo, setIsDeletingVideo] = useState(false);
+  const [showConfirmVideoDelete, setShowConfirmVideoDelete] = useState(false);
+  const [isReuploading, setIsReuploading] = useState(false);
 
   useEffect(() => {
     if (video.status !== 'processing') return;
@@ -112,6 +117,37 @@ export const VideoCard: React.FC<VideoCardProps> = ({
       alert(err?.message || 'שגיאה במחיקת הסרטון');
       setIsDeleting(false);
       setShowConfirmDelete(false);
+    }
+  };
+
+    // Only linked users (real content id, not "lib-...") may delete a flawed video
+  const canDeleteVideo = video.status === 'questions_failed' && !contentItem.id.startsWith('lib-');
+  const isUnavailable = video.status === 'deleted';
+
+  const handleDeleteVideo = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsDeletingVideo(true);
+    try {
+      await api.deleteVideo(video.id);
+      onVideoDeleted?.(video.id);
+    } catch (err: any) {
+      setRetryMessage(err?.message || 'לא ניתן היה למחוק את הסרטון');
+      setIsDeletingVideo(false);
+      setShowConfirmVideoDelete(false);
+    }
+  };
+
+  const handleReupload = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsReuploading(true);
+    setRetryMessage(null);
+    try {
+      const created = await api.addContent(video.youtube_id);
+      onVideoUpdated?.(created.video); // same video id as before, now "processing"
+    } catch (err: any) {
+      setRetryMessage(err?.message || 'לא ניתן היה להעלות את הסרטון מחדש');
+    } finally {
+      setIsReuploading(false);
     }
   };
 
@@ -215,12 +251,22 @@ export const VideoCard: React.FC<VideoCardProps> = ({
           )}
         </div>
 
+          {isUnavailable && (
+            <div className="mb-3 p-2.5 rounded-xl bg-slate-800/60 border border-slate-700 text-slate-300 text-xs">
+              <p className="font-semibold mb-1">הסרטון אינו זמין עקב מחיקה</p>
+              <p>אפשר להעלות אותו מחדש או להסיר אותו מהרשימה.</p>
+            </div>
+          )}
+
         {/* Card Footer Actions */}
         <div className="pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => onWatch(contentItem)}
-              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-all shadow-md shadow-indigo-600/20"
+            disabled={isUnavailable}
+              onClick={() =>{
+                if (isUnavailable) return;
+                onWatch(contentItem)}}
+              className="disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium transition-all shadow-md shadow-indigo-600/20"
             >
               <Play className="w-3.5 h-3.5 fill-current" />
               <span>צפה ולמד</span>
@@ -235,6 +281,47 @@ export const VideoCard: React.FC<VideoCardProps> = ({
               >
                 <RotateCw className={`w-3.5 h-3.5 ${isRetrying ? 'animate-spin' : ''}`} />
                 <span>{retrySecondsRemaining > 0 ? `נסה שוב בעוד ${retrySecondsRemaining} שניות` : 'נסה שוב ליצור שאלות'}</span>
+              </button>
+            )}
+
+                        {canDeleteVideo && (
+              showConfirmVideoDelete ? (
+                <div className="flex items-center gap-1">
+                  <span className="text-xs text-slate-300">למחוק לצמיתות?</span>
+                  <button
+                    onClick={handleDeleteVideo}
+                    disabled={isDeletingVideo}
+                    className="px-2 py-1 rounded text-xs bg-rose-600 text-white font-medium hover:bg-rose-500 disabled:opacity-50"
+                  >
+                    {isDeletingVideo ? 'מוחק...' : 'אישור'}
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowConfirmVideoDelete(false); }}
+                    className="px-2 py-1 rounded text-xs text-slate-400 hover:text-white"
+                  >
+                    ביטול
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowConfirmVideoDelete(true); }}
+                  className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-rose-300 hover:text-white bg-rose-500/10 hover:bg-rose-500/20 border border-rose-500/30"
+                  title="מחיקה לצמיתות של סרטון פגום מהמאגר"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>מחק סרטון פגום</span>
+                </button>
+              )
+            )}
+
+            {isUnavailable && (
+              <button
+                onClick={handleReupload}
+                disabled={isReuploading}
+                className="flex items-center gap-1 px-2.5 py-1.5 rounded-xl text-xs font-medium text-amber-300 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 disabled:opacity-50"
+              >
+                <RotateCw className={`w-3.5 h-3.5 ${isReuploading ? 'animate-spin' : ''}`} />
+                <span>{isReuploading ? 'מעלה...' : 'העלה מחדש'}</span>
               </button>
             )}
           </div>

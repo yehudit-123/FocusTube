@@ -171,6 +171,10 @@ export const api = {
   getVideo: (videoId: string) =>
     request<Video>(`/api/videos/${videoId}`),
 
+    // Permanently delete a flawed video (server keeps a tombstone)
+  deleteVideo: (videoId: string) =>
+    request<{ message: string }>(`/api/videos/${videoId}`, { method: 'DELETE' }),
+  
   // Sessions
   createSession: (content_id: string) =>
     request<Session>('/api/sessions', { method: 'POST', body: JSON.stringify({ content_id }) }),

@@ -10,6 +10,7 @@ from server.app.models.video import VideoModel
 from server.app.services.auth_service import get_current_user
 from server.app.services.youtube_service import extract_youtube_id, fetch_video_metadata
 from server.app.services.video_processor import process_video_background
+from server.app.services.video_lookup import load_video_or_placeholder
 
 router = APIRouter(prefix="/api/content", tags=["content"])
 
@@ -62,8 +63,11 @@ async def add_content(
             created_at=now
         )
 
-    # Video does not exist yet: create global video entry with "processing"
-    video_id = str(uuid.uuid4())
+    # Video does not exist yet. If it was deleted before, reuse its old id so
+    # every old reference (content links, classes, sessions) works again.
+    tombstone = await db.deleted_videos.find_one({"youtube_id": youtube_id})
+    video_id = tombstone["video_id"] if tombstone else str(uuid.uuid4())
+
     meta = await fetch_video_metadata(youtube_id)
     initial_title = meta.get("title", f"YouTube Video ({youtube_id})")
 
@@ -82,14 +86,21 @@ async def add_content(
     }
     await db.videos.insert_one(video_doc)
 
-    content_id = str(uuid.uuid4())
-    content_doc = {
-        "id": content_id,
-        "user_id": user_id,
-        "video_id": video_id,
-        "created_at": now
-    }
-    await db.content.insert_one(content_doc)
+    if tombstone:
+        await db.deleted_videos.delete_one({"youtube_id": youtube_id})
+
+    # The user may already have a link (the "unavailable" item): don't duplicate it.
+    existing_link = await db.content.find_one({"user_id": user_id, "video_id": video_id})
+    if existing_link:
+        content_id = existing_link["id"]
+    else:
+        content_id = str(uuid.uuid4())
+        await db.content.insert_one({
+            "id": content_id,
+            "user_id": user_id,
+            "video_id": video_id,
+            "created_at": now
+        })
 
     # Launch background processing task
     background_tasks.add_task(process_video_background, video_id, youtube_id)
@@ -139,13 +150,13 @@ async def list_user_content(
 
         items = []
         for c in user_contents:
-            video = await db.videos.find_one({"id": c["video_id"]})
-            if video:
+            video_model = await load_video_or_placeholder(db, c["video_id"])
+            if video_model:
                 items.append(ContentItemResponse(
                     id=c["id"],
                     user_id=user_id,
                     video_id=c["video_id"],
-                    video=VideoModel(**video),
+                    video=video_model,
                     created_at=c["created_at"]
                 ))
 
@@ -177,15 +188,15 @@ async def get_content_item(
     # Check if it's a library synthetic id (lib-<video_id>) or real content_id
     if content_id.startswith("lib-"):
         video_id = content_id.replace("lib-", "")
-        video = await db.videos.find_one({"id": video_id})
-        if not video:
+        video_model = await load_video_or_placeholder(db, video_id)
+        if not video_model:
             raise HTTPException(status_code=404, detail={"message": "לא נמצא"})
         return ContentItemResponse(
             id=content_id,
             user_id=user_id,
-            video_id=video["id"],
-            video=VideoModel(**video),
-            created_at=video.get("created_at", datetime.now(timezone.utc))
+            video_id=video_model.id,
+            video=video_model,
+            created_at=video_model.created_at
         )
 
     content = await db.content.find_one({"id": content_id})
@@ -193,18 +204,17 @@ async def get_content_item(
         # Strict user isolation: 404 with generic "לא נמצא"
         raise HTTPException(status_code=404, detail={"message": "לא נמצא"})
 
-    video = await db.videos.find_one({"id": content["video_id"]})
-    if not video:
+    video_model = await load_video_or_placeholder(db, content["video_id"])
+    if not video_model:
         raise HTTPException(status_code=404, detail={"message": "לא נמצא"})
 
     return ContentItemResponse(
         id=content["id"],
         user_id=user_id,
-        video_id=video["id"],
-        video=VideoModel(**video),
+        video_id=video_model.id,
+        video=video_model,
         created_at=content["created_at"]
     )
-
 
 @router.delete("/{content_id}", status_code=status.HTTP_200_OK)
 async def delete_content_item(
