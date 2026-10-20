@@ -46,6 +46,7 @@ export interface ContentItem {
   video_id: string;
   video: Video;
   created_at: string;
+  already_exists?: boolean;
 }
 
 export interface SessionReading {

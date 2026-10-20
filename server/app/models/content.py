@@ -16,3 +16,4 @@ class ContentItemResponse(BaseModel):
     video_id: str
     video: VideoModel
     created_at: datetime
+    already_exists: bool = False
