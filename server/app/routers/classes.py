@@ -24,6 +24,26 @@ def generate_join_code() -> str:
     return secrets.token_hex(3).upper()
 
 
+async def _class_youtube_ids(db, content_ids: List[str]) -> List[str]:
+    """Resolve a class's content ids (real content ids or lib-<video_id>) to youtube ids."""
+    video_ids = []
+    for content_id in content_ids:
+        if content_id.startswith("lib-"):
+            video_ids.append(content_id.removeprefix("lib-"))
+        else:
+            content = await db.content.find_one({"id": content_id})
+            if content:
+                video_ids.append(content["video_id"])
+
+    youtube_ids = set()
+    async for video in db.videos.find({"id": {"$in": video_ids}}):
+        youtube_ids.add(video["youtube_id"])
+    # A deleted video keeps its youtube_id in the tombstone, so old sessions still count.
+    async for tomb in db.deleted_videos.find({"video_id": {"$in": video_ids}}):
+        youtube_ids.add(tomb["youtube_id"])
+    return list(youtube_ids)
+
+
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=ClassResponse)
 async def create_class(
     req: CreateClassRequest,
@@ -188,16 +208,21 @@ async def get_class_details(
     if class_doc.get("role") == "teacher" and is_owner:
         metrics = []
         member_ids = [m for m in class_doc.get("member_ids", []) if m != user_id]
+
+        # Class content ids are the teacher's ids, while a student's session holds the
+        # student's own id (or lib-<video_id>), so match sessions by youtube_id instead.
+        class_content_ids = class_doc.get("content_ids", [])
+        class_youtube_ids = await _class_youtube_ids(db, class_content_ids)
+
         for mem_id in member_ids:
             student = await db.users.find_one({"id": mem_id})
             if not student:
                 continue
 
             # Query student's sessions for videos in this class (or all student's sessions if empty)
-            class_content_ids = class_doc.get("content_ids", [])
             query = {"user_id": mem_id}
             if class_content_ids:
-                query["content_id"] = {"$in": class_content_ids}
+                query["youtube_id"] = {"$in": class_youtube_ids}
 
             sessions = await db.sessions.find(query).to_list(length=100)
             
