@@ -63,6 +63,7 @@ export const WatchView: React.FC<WatchViewProps> = ({ contentItem, onSessionEnde
   const ytPlayerRef = useRef<any>(null);
   const lastPauseTimeRef = useRef<number>(0); // Cooldown of ~60s
   const lowScoreConsecutiveRef = useRef<number>(0); // Need 2 consecutive evaluations < 0.6
+  const attentionReadingHandlerRef = useRef<(reading: AttentionReading) => void>(() => {});
 
   // 1. Initialize YouTube IFrame API
   useEffect(() => {
@@ -134,7 +135,11 @@ export const WatchView: React.FC<WatchViewProps> = ({ contentItem, onSessionEnde
       }
     } catch (err: any) {
       alert(err?.message || 'שגיאה ביצירת סשן למידה');
+      return;
     }
+
+    // Turn the camera on automatically; the button stays as a retry if this fails.
+    handleEnableCamera();
   };
 
   // 3. Enable Camera
@@ -158,8 +163,10 @@ export const WatchView: React.FC<WatchViewProps> = ({ contentItem, onSessionEnde
       setIsCameraEnabled(false);
     };
 
+    // Go through the ref so readings see the latest session state, not the state
+    // from the render that started the camera (it starts in the same click as the session).
     tracker.onReading = (reading: AttentionReading) => {
-      handleAttentionReading(reading);
+      attentionReadingHandlerRef.current(reading);
     };
 
     try {
@@ -223,6 +230,8 @@ export const WatchView: React.FC<WatchViewProps> = ({ contentItem, onSessionEnde
       triggerPauseAndQuestion(currentTime, reading.dropTimeOffsetSeconds || 0);
     }
   };
+
+  attentionReadingHandlerRef.current = handleAttentionReading;
 
   // 5. Trigger Pause and select segment question
   const triggerPauseAndQuestion = (currentPlaybackTime: number, dropOffsetSeconds: number) => {
