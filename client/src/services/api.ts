@@ -226,6 +226,15 @@ export const api = {
   joinClass: (data: { join_code: string; confirmed_privacy: boolean }) =>
     request<Classroom>('/api/classes/join', { method: 'POST', body: JSON.stringify(data) }),
 
+  approveJoinRequest: (classId: string, userId: string) =>
+    request<Classroom>(`/api/classes/${classId}/requests/${userId}/approve`, { method: 'POST' }),
+
+  declineJoinRequest: (classId: string, userId: string) =>
+    request<Classroom>(`/api/classes/${classId}/requests/${userId}/decline`, { method: 'POST' }),
+
+  removeClassMember: (classId: string, userId: string) =>
+    request<Classroom>(`/api/classes/${classId}/members/${userId}`, { method: 'DELETE' }),
+
   addVideoToClass: (classId: string, content_id: string) =>
     request<{ message: string }>(`/api/classes/${classId}/videos`, { method: 'POST', body: JSON.stringify({ content_id }) }),
 

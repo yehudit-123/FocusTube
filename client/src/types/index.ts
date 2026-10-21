@@ -99,6 +99,22 @@ export interface StudentMetric {
   }>;
 }
 
+export interface ClassMember {
+  user_id: string;
+  display_name: string;
+  email: string; // empty unless the viewer owns the class (or is this member)
+  is_owner: boolean;
+}
+
+export interface JoinRequest {
+  user_id: string;
+  display_name: string;
+  email: string;
+  requested_at: string;
+}
+
+export type ClassMembership = 'owner' | 'member' | 'invited' | 'pending' | 'none';
+
 export interface Classroom {
   id: string;
   owner_id: string;
@@ -109,8 +125,12 @@ export interface Classroom {
   join_code: string;
   content_ids: string[];
   member_ids: string[];
-  authorized_students: string[];
+  authorized_students: string[]; // owner only
   created_at: string;
+  membership: ClassMembership;
+  member_count: number;
+  members: ClassMember[];
+  join_requests: JoinRequest[]; // owner only
   metrics?: StudentMetric[];
 }
 

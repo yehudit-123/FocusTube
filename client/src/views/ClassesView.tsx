@@ -1,36 +1,31 @@
 /**
  * FocusTube - Classrooms View (כיתות לימוד)
- * Supports student collections, teacher dashboards, invite codes,
+ * Supports student collections, teacher dashboards, invite codes, join requests
  * and privacy consent confirmation.
  */
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Classroom, StudentMetric, Video } from '../types';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Classroom, ContentItem, Video } from '../types';
 import { api } from '../services/api';
-import { VideoCard } from '../components/VideoCard';
+import { ClassHeader } from '../components/classes/ClassHeader';
+import { ClassTabs, ClassTab } from '../components/classes/ClassTabs';
+import { ClassVideosTab, ClassVideoEntry } from '../components/classes/ClassVideosTab';
+import { ClassStudentsTab } from '../components/classes/ClassStudentsTab';
+import { ClassStatsTab } from '../components/classes/ClassStatsTab';
+import { ClassJoinPrompt } from '../components/classes/ClassJoinPrompt';
 import {
   Users,
   Plus,
   KeyRound,
-  GraduationCap,
-  BookOpen,
-  TrendingUp,
   ShieldCheck,
-  CheckCircle2,
   X,
   AlertCircle,
   Loader2,
-  Copy,
-  Check,
   BarChart3,
-  HelpCircle,
-  Clock,
-  Mail,
   Video as VideoIcon,
-  Trash2,
-  Search,
 } from 'lucide-react';
-import { ContentItem } from '../types';
+
+type ClassTabId = 'videos' | 'students' | 'stats';
 
 interface ClassesViewProps {
   currentUserId: string;
@@ -40,11 +35,8 @@ interface ClassesViewProps {
 export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatchVideo }) => {
   const [classes, setClasses] = useState<Classroom[]>([]);
   const [selectedClass, setSelectedClass] = useState<Classroom | null>(null);
+  const [activeTab, setActiveTab] = useState<ClassTabId>('videos');
   const [availableVideos, setAvailableVideos] = useState<ContentItem[]>([]);
-  const [newStudentEmails, setNewStudentEmails] = useState('');
-  const [videoSearch, setVideoSearch] = useState('');
-  const [isVideoPickerOpen, setIsVideoPickerOpen] = useState(false);
-  const videoPickerRef = useRef<HTMLDivElement | null>(null);
   const [classActionMessage, setClassActionMessage] = useState<string | null>(null);
   const [classActionError, setClassActionError] = useState<string | null>(null);
   const [isUpdatingClass, setIsUpdatingClass] = useState(false);
@@ -69,31 +61,17 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
   const [joinCode, setJoinCode] = useState('');
   const [confirmedPrivacy, setConfirmedPrivacy] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
-  const [selectedClassPrivacy, setSelectedClassPrivacy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
-  const [copiedCode, setCopiedCode] = useState(false);
 
   useEffect(() => {
     fetchClasses();
   }, []);
 
-  // The add-video list shows only while the teacher is searching: close it on a click
-  // outside the search area (clicks on its "add" buttons keep it open).
+  // Another class starts on the videos tab with no leftover messages.
   useEffect(() => {
-    if (!isVideoPickerOpen) return;
-    const handlePointerDown = (e: PointerEvent) => {
-      if (videoPickerRef.current && !videoPickerRef.current.contains(e.target as Node)) {
-        setIsVideoPickerOpen(false);
-      }
-    };
-    document.addEventListener('pointerdown', handlePointerDown);
-    return () => document.removeEventListener('pointerdown', handlePointerDown);
-  }, [isVideoPickerOpen]);
-
-  // Switching to another class starts with a closed, empty search.
-  useEffect(() => {
-    setIsVideoPickerOpen(false);
-    setVideoSearch('');
+    setActiveTab('videos');
+    setClassActionMessage(null);
+    setClassActionError(null);
   }, [selectedClass?.id]);
 
   useEffect(() => {
@@ -120,7 +98,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     };
   }, [selectedClass?.id]);
 
-    // Class items that are not in the library anymore: ask the server.
+  // Class items that are not in the library anymore: ask the server.
   // For deleted videos it returns a placeholder with status "deleted".
   useEffect(() => {
     if (!selectedClass || !availableLoaded) return;
@@ -186,6 +164,34 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     }
   };
 
+  // Keep the selected class and its entry in the side list in sync.
+  const applyClassUpdate = (updated: Classroom) => {
+    setSelectedClass(updated);
+    setClasses((current) => current.map((cls) => (cls.id === updated.id ? updated : cls)));
+  };
+
+  // Runs an owner action on the selected class, then shows the class as the server returns it.
+  const runClassAction = async (
+    action: (classroom: Classroom) => Promise<Classroom>,
+    successMessage: string,
+    fallbackError: string
+  ): Promise<boolean> => {
+    if (!selectedClass) return false;
+    setIsUpdatingClass(true);
+    setClassActionError(null);
+    setClassActionMessage(null);
+    try {
+      applyClassUpdate(await action(selectedClass));
+      setClassActionMessage(successMessage);
+      return true;
+    } catch (err: any) {
+      setClassActionError(err?.message || fallbackError);
+      return false;
+    } finally {
+      setIsUpdatingClass(false);
+    }
+  };
+
   const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!className.trim()) return;
@@ -224,12 +230,13 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     setJoinError(null);
 
     try {
+      // A teacher class may answer with membership "pending": the request waits for the teacher.
       const joined = await api.joinClass({
         join_code: joinCode.trim(),
         confirmed_privacy: confirmedPrivacy,
       });
 
-      setClasses((prev) => [joined, ...prev]);
+      setClasses((prev) => [joined, ...prev.filter((cls) => cls.id !== joined.id)]);
       setSelectedClass(joined);
       setIsJoinModalOpen(false);
       setJoinCode('');
@@ -241,20 +248,17 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     }
   };
 
-  // A student authorized by the teacher sees the class before joining, but the teacher
+  // A student invited by the teacher sees the class before joining, but the teacher
   // only gets data for members who joined and approved the privacy notice.
-  const handleJoinSelectedClass = async () => {
+  const handleJoinSelectedClass = async (privacyConfirmed: boolean) => {
     if (!selectedClass) return;
     setIsJoining(true);
     setClassActionError(null);
     try {
-      const joined = await api.joinClass({
+      applyClassUpdate(await api.joinClass({
         join_code: selectedClass.join_code,
-        confirmed_privacy: selectedClassPrivacy,
-      });
-      setSelectedClass((current) => current ? { ...current, ...joined } : joined);
-      setClasses((current) => current.map((cls) => cls.id === joined.id ? { ...cls, ...joined } : cls));
-      setSelectedClassPrivacy(false);
+        confirmed_privacy: privacyConfirmed,
+      }));
     } catch (err: any) {
       setClassActionError(err?.message || 'שגיאה בהצטרפות לכיתה');
     } finally {
@@ -262,69 +266,48 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     }
   };
 
-  const copyToClipboard = (code: string) => {
-    navigator.clipboard.writeText(code);
-    setCopiedCode(true);
-    setTimeout(() => setCopiedCode(false), 2000);
-  };
+  const handleAddStudents = (emails: string[]) =>
+    runClassAction(
+      (cls) => api.updateClass(cls.id, { authorized_students: [...new Set([...cls.authorized_students, ...emails])] }),
+      'התלמידים נוספו. יש לשלוח להם את קוד הכיתה כדי שיוכלו להצטרף.',
+      'לא ניתן להוסיף תלמידים לכיתה'
+    );
 
-  const handleAddStudents = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedClass || !newStudentEmails.trim()) return;
+  const handleCancelInvite = (email: string) =>
+    runClassAction(
+      (cls) => api.updateClass(cls.id, { authorized_students: cls.authorized_students.filter((e) => e !== email) }),
+      'ההזמנה בוטלה.',
+      'לא ניתן לבטל את ההזמנה'
+    );
 
-    const emails = newStudentEmails
-      .split(/[,\n]/)
-      .map((email) => email.trim().toLowerCase())
-      .filter(Boolean);
-    const authorizedStudents = [...new Set([...selectedClass.authorized_students, ...emails])];
-    setIsUpdatingClass(true);
-    setClassActionError(null);
-    setClassActionMessage(null);
-    try {
-      const updated = await api.updateClass(selectedClass.id, { authorized_students: authorizedStudents });
-      setSelectedClass((current) => current ? { ...current, ...updated } : updated);
-      setClasses((current) => current.map((cls) => cls.id === updated.id ? { ...cls, ...updated } : cls));
-      setNewStudentEmails('');
-      setClassActionMessage('התלמידים נוספו לרשימת המורשים. יש לשלוח להם את קוד הכיתה כדי שיוכלו להצטרף.');
-      await loadClassDetails(selectedClass.id);
-    } catch (err: any) {
-      setClassActionError(err?.message || 'לא ניתן להוסיף תלמידים לכיתה');
-    } finally {
-      setIsUpdatingClass(false);
-    }
-  };
+  const handleApproveRequest = (userId: string) =>
+    runClassAction((cls) => api.approveJoinRequest(cls.id, userId), 'התלמיד/ה צורף/ה לכיתה.', 'לא ניתן לאשר את הבקשה');
 
-  const handleAddVideo = async (videoId: string) => {
-    if (!selectedClass) return;
+  const handleDeclineRequest = (userId: string) =>
+    runClassAction((cls) => api.declineJoinRequest(cls.id, userId), 'הבקשה נדחתה.', 'לא ניתן לדחות את הבקשה');
 
-    setIsUpdatingClass(true);
-    setClassActionError(null);
-    setClassActionMessage(null);
-    try {
-      await api.addVideoToClass(selectedClass.id, `lib-${videoId}`);
-      setClassActionMessage('הסרטון נוסף לכיתה בהצלחה.');
-      await loadClassDetails(selectedClass.id);
-    } catch (err: any) {
-      setClassActionError(err?.message || 'לא ניתן להוסיף את הסרטון לכיתה');
-    } finally {
-      setIsUpdatingClass(false);
-    }
-  };
+  const handleRemoveMember = (userId: string) =>
+    runClassAction((cls) => api.removeClassMember(cls.id, userId), 'התלמיד/ה הוסר/ה מהכיתה.', 'לא ניתן להסיר את התלמיד/ה');
 
-  const handleRemoveVideo = async (contentId: string) => {
-    if (!selectedClass) return;
-    setIsUpdatingClass(true);
-    setClassActionError(null);
-    try {
-      await api.removeVideoFromClass(selectedClass.id, contentId);
-      await loadClassDetails(selectedClass.id);
-      setClassActionMessage('הסרטון הוסר מהכיתה.');
-    } catch (err: any) {
-      setClassActionError(err?.message || 'לא ניתן להסיר את הסרטון מהכיתה');
-    } finally {
-      setIsUpdatingClass(false);
-    }
-  };
+  const handleAddVideo = (videoId: string) =>
+    runClassAction(
+      async (cls) => {
+        await api.addVideoToClass(cls.id, `lib-${videoId}`);
+        return api.getClass(cls.id);
+      },
+      'הסרטון נוסף לכיתה בהצלחה.',
+      'לא ניתן להוסיף את הסרטון לכיתה'
+    );
+
+  const handleRemoveVideo = (contentId: string) =>
+    runClassAction(
+      async (cls) => {
+        await api.removeVideoFromClass(cls.id, contentId);
+        return api.getClass(cls.id);
+      },
+      'הסרטון הוסר מהכיתה.',
+      'לא ניתן להסיר את הסרטון מהכיתה'
+    );
 
   // VideoCard reports status changes (processing finished, or a deleted video was
   // re-uploaded, which keeps its old id) so the class list stays current.
@@ -344,62 +327,32 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
 
   const watchClassVideo = (item: ContentItem) => onWatchVideo({ ...item, id: `lib-${item.video.id}` });
 
-     const classVideos = selectedClass
+  const classVideos: ClassVideoEntry[] = selectedClass
     ? selectedClass.content_ids.flatMap((contentId) => {
-        const item = availableVideos.find((candidate) =>
-          candidate.id === contentId || `lib-${candidate.video.id}` === contentId
-        );
-        if (item) return [{ contentId, item, unavailable: false }];
-        const gone = unavailableItems[contentId];
-        return gone ? [{ contentId, item: gone, unavailable: true }] : [];
+        const item =
+          availableVideos.find((candidate) =>
+            candidate.id === contentId || `lib-${candidate.video.id}` === contentId
+          ) ?? unavailableItems[contentId];
+        return item ? [{ contentId, item }] : [];
       })
     : [];
 
-  const needsToJoin = !!selectedClass &&
-    selectedClass.role === 'teacher' &&
-    selectedClass.owner_id !== currentUserId &&
-    !selectedClass.member_ids.includes(currentUserId);
+  const isOwner = selectedClass?.membership === 'owner';
+  const isMember = isOwner || selectedClass?.membership === 'member';
 
-  // Same matching as the library search: title or category contains the query.
-  const videoQuery = videoSearch.trim().toLowerCase();
-  const availableToAdd = selectedClass
-    ? availableVideos.filter((item) =>
-        !selectedClass.content_ids.includes(item.id) &&
-        !selectedClass.content_ids.includes(`lib-${item.video.id}`) &&
-        (!videoQuery ||
-          item.video.title.toLowerCase().includes(videoQuery) ||
-          item.video.categories.some((cat) => cat.toLowerCase().includes(videoQuery)))
-      )
-    : [];
-
-  const renderClassVideos = (canRemove: boolean) =>
-    classVideos.length === 0 ? (
-      <p className="text-sm text-slate-400">עדיין לא נוספו סרטונים לכיתה.</p>
-    ) : (
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {classVideos.map(({ contentId, item }) => (
-          <div key={contentId} className="relative">
-            <VideoCard
-              contentItem={{ ...item, id: `lib-${item.video.id}` }}
-              onWatch={watchClassVideo}
-              onVideoUpdated={handleClassVideoUpdated}
-            />
-            {canRemove && (
-              <button
-                type="button"
-                onClick={() => handleRemoveVideo(contentId)}
-                disabled={isUpdatingClass}
-                className="absolute top-3 left-3 p-2 rounded-lg bg-slate-950/80 text-slate-300 hover:text-rose-300 hover:bg-rose-500/20 backdrop-blur-sm disabled:opacity-50"
-                title="הסר סרטון מהכיתה"
-                aria-label={`הסר את ${item.video.title} מהכיתה`}
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-    );
+  const tabs: ClassTab<ClassTabId>[] = [
+    { id: 'videos', label: 'סרטונים', icon: VideoIcon },
+    {
+      id: 'students',
+      label: selectedClass?.role === 'teacher' ? 'תלמידים' : 'משתתפים',
+      icon: Users,
+      badge: isOwner ? selectedClass?.join_requests.length : undefined,
+    },
+    ...(isOwner && selectedClass?.role === 'teacher'
+      ? [{ id: 'stats' as const, label: 'נתוני צפייה', icon: BarChart3 }]
+      : []),
+  ];
+  const currentTab = tabs.some((t) => t.id === activeTab) ? activeTab : 'videos';
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fade-in">
@@ -481,6 +434,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
               {classes.map((cls) => {
                 const isSelected = selectedClass?.id === cls.id;
                 const isTeacher = cls.role === 'teacher';
+                const requestsCount = cls.membership === 'owner' ? cls.join_requests.length : 0;
 
                 return (
                   <div
@@ -514,8 +468,18 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
                     </div>
 
                     <div className="flex items-center justify-between pt-2 border-t border-slate-800/60 text-xs text-slate-400">
-                      <span>קוד הצטרפות: <strong className="font-mono text-white">{cls.join_code}</strong></span>
-                      <span>{cls.member_ids?.length || 1} משתתפים</span>
+                      <span>{cls.member_count} משתתפים</span>
+                      {cls.membership === 'pending' && (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 font-semibold">ממתין לאישור</span>
+                      )}
+                      {cls.membership === 'invited' && (
+                        <span className="px-2 py-0.5 rounded-md bg-indigo-500/15 text-indigo-300 font-semibold">הזמנה להצטרפות</span>
+                      )}
+                      {requestsCount > 0 && (
+                        <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 font-semibold">
+                          {requestsCount} בקשות הצטרפות
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
@@ -523,257 +487,58 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
             </div>
           </div>
 
-          {/* Class Details & Dashboard (8 cols) */}
+          {/* Selected class (8 cols) */}
           <div className="lg:col-span-8 space-y-6">
             {selectedClass && (
               <div className="space-y-6">
-                {/* Header Banner */}
-                <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="px-2.5 py-0.5 rounded-md text-xs font-semibold bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-                          {selectedClass.category}
-                        </span>
-                        <span className="text-xs text-slate-400">
-                          יוצר הכיתה: {selectedClass.owner_name}
-                        </span>
-                      </div>
-                      <h2 className="text-2xl font-black text-white">
-                        {selectedClass.name}
-                      </h2>
+                <ClassHeader classroom={selectedClass} />
+
+                {!isMember ? (
+                  <ClassJoinPrompt
+                    key={selectedClass.id}
+                    classroom={selectedClass}
+                    isJoining={isJoining}
+                    error={classActionError}
+                    onJoin={handleJoinSelectedClass}
+                  />
+                ) : (
+                  <>
+                    <ClassTabs tabs={tabs} activeTab={currentTab} onChange={setActiveTab} />
+
+                    <div role="tabpanel" className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
+                      {currentTab === 'videos' && (
+                        <ClassVideosTab
+                          key={selectedClass.id}
+                          classVideos={classVideos}
+                          libraryVideos={availableVideos}
+                          libraryLoaded={availableLoaded}
+                          canManage={isOwner}
+                          isBusy={isUpdatingClass}
+                          onAddVideo={handleAddVideo}
+                          onRemoveVideo={handleRemoveVideo}
+                          onWatch={watchClassVideo}
+                          onVideoUpdated={handleClassVideoUpdated}
+                        />
+                      )}
+                      {currentTab === 'students' && (
+                        <ClassStudentsTab
+                          key={selectedClass.id}
+                          classroom={selectedClass}
+                          currentUserId={currentUserId}
+                          isBusy={isUpdatingClass}
+                          onApproveRequest={handleApproveRequest}
+                          onDeclineRequest={handleDeclineRequest}
+                          onRemoveMember={handleRemoveMember}
+                          onAddStudents={handleAddStudents}
+                          onCancelInvite={handleCancelInvite}
+                        />
+                      )}
+                      {currentTab === 'stats' && <ClassStatsTab metrics={selectedClass.metrics ?? []} />}
+
+                      {classActionError && <p role="alert" className="text-sm text-rose-300">{classActionError}</p>}
+                      {classActionMessage && <p role="status" className="text-sm text-emerald-300">{classActionMessage}</p>}
                     </div>
-
-                    {/* Join Code Sharing */}
-                    <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 px-3.5 py-2 rounded-2xl">
-                      <span className="text-xs text-slate-400">קוד שיתוף:</span>
-                      <span className="text-base font-black font-mono text-indigo-400">
-                        {selectedClass.join_code}
-                      </span>
-                      <button
-                        onClick={() => copyToClipboard(selectedClass.join_code)}
-                        className="p-1 hover:text-white text-slate-400 transition-colors"
-                        title="העתק קוד ללוח"
-                      >
-                        {copiedCode ? (
-                          <Check className="w-4 h-4 text-emerald-400" />
-                        ) : (
-                          <Copy className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Teacher Tracking Dashboard (Section 9) */}
-                {selectedClass.owner_id === currentUserId && (
-                  <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-6">
-                    {selectedClass.role === 'teacher' && (
-                      <div className="space-y-4">
-                        <div className="flex items-center gap-2 text-white font-bold text-lg">
-                          <Mail className="w-5 h-5 text-indigo-400" />
-                          <span>הוספת תלמידים לכיתה</span>
-                        </div>
-                        <form onSubmit={handleAddStudents} className="flex flex-col sm:flex-row gap-3">
-                          <textarea
-                            value={newStudentEmails}
-                            onChange={(e) => setNewStudentEmails(e.target.value)}
-                            rows={2}
-                            dir="ltr"
-                            placeholder="student1@school.edu, student2@school.edu"
-                            aria-label="כתובות דוא״ל של תלמידים"
-                            className="flex-1 px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm text-left font-mono focus:outline-none focus:border-indigo-500"
-                          />
-                          <button
-                            type="submit"
-                            disabled={isUpdatingClass || !newStudentEmails.trim()}
-                            className="self-start flex items-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium disabled:opacity-50"
-                          >
-                            <Plus className="w-4 h-4" />
-                            הוסף תלמידים
-                          </button>
-                        </form>
-                        <p className="text-xs text-slate-400">
-                          המערכת תאפשר לכתובות האלה להצטרף. לאחר מכן שלחו לתלמידים את קוד הכיתה: <strong className="font-mono text-indigo-300">{selectedClass.join_code}</strong>
-                        </p>
-                        {selectedClass.authorized_students.length > 0 && (
-                          <p className="text-xs text-slate-300">
-                            תלמידים מורשים: {selectedClass.authorized_students.join(', ')}
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    <div className="space-y-4 border-t border-slate-800 pt-5">
-                      <div className="flex items-center gap-2 text-white font-bold text-lg">
-                        <VideoIcon className="w-5 h-5 text-indigo-400" />
-                        <span>סרטונים בכיתה</span>
-                      </div>
-                      <div
-                        ref={videoPickerRef}
-                        className="space-y-2"
-                        onKeyDown={(e) => { if (e.key === 'Escape') setIsVideoPickerOpen(false); }}
-                      >
-                        <div className="relative">
-                          <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                          <input
-                            type="text"
-                            value={videoSearch}
-                            onChange={(e) => { setVideoSearch(e.target.value); setIsVideoPickerOpen(true); }}
-                            onFocus={() => setIsVideoPickerOpen(true)}
-                            placeholder="חיפוש סרטון בכל הספרייה לפי כותרת או נושא..."
-                            aria-label="חיפוש סרטון להוספה לכיתה"
-                            className="w-full pr-10 pl-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-indigo-500"
-                          />
-                        </div>
-                        {!isVideoPickerOpen ? null : !availableLoaded ? (
-                          <p className="text-xs text-slate-400 flex items-center gap-2">
-                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                            טוען את ספריית הסרטונים...
-                          </p>
-                        ) : availableToAdd.length === 0 ? (
-                          <p className="text-xs text-slate-400">
-                            {videoQuery ? 'לא נמצאו סרטונים תואמים בספרייה.' : 'כל סרטוני הספרייה כבר נמצאים בכיתה.'}
-                          </p>
-                        ) : (
-                          <ul className="max-h-72 overflow-y-auto space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 p-2">
-                            {availableToAdd.map((item) => (
-                              <li key={item.video.id} className="flex items-center gap-3 rounded-lg p-1.5 hover:bg-slate-800/60">
-                                <img
-                                  src={`https://img.youtube.com/vi/${item.video.youtube_id}/mqdefault.jpg`}
-                                  alt=""
-                                  loading="lazy"
-                                  className="w-24 aspect-video shrink-0 rounded-md object-cover bg-slate-900"
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm text-white line-clamp-2" title={item.video.title}>{item.video.title}</p>
-                                  <p className="text-xs text-indigo-300 truncate">{item.video.categories.join(' · ')}</p>
-                                </div>
-                                <button
-                                  type="button"
-                                  onClick={() => handleAddVideo(item.video.id)}
-                                  disabled={isUpdatingClass}
-                                  className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium disabled:opacity-50"
-                                  aria-label={`הוסף את ${item.video.title} לכיתה`}
-                                >
-                                  <Plus className="w-3.5 h-3.5" />
-                                  הוסף
-                                </button>
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                      </div>
-                      {renderClassVideos(true)}
-                    </div>
-
-                    {classActionError && <p role="alert" className="text-sm text-rose-300">{classActionError}</p>}
-                    {classActionMessage && <p role="status" className="text-sm text-emerald-300">{classActionMessage}</p>}
-                  </div>
-                )}
-
-                {needsToJoin && (
-                  <div className="bg-slate-900 border border-indigo-500/30 rounded-3xl p-6 shadow-xl space-y-4">
-                    <div className="flex items-center gap-2 text-white font-bold text-lg">
-                      <KeyRound className="w-5 h-5 text-indigo-400" />
-                      <span>הצטרפות לכיתה</span>
-                    </div>
-                    <p className="text-sm text-slate-300">
-                      המורה הוסיף/ה אותך לכיתה זו. כדי לצפות בסרטוני הכיתה יש להצטרף אליה ולאשר את הצגת נתוני הריכוז.
-                    </p>
-                    <label className="flex items-start gap-2.5 text-sm text-slate-300 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={selectedClassPrivacy}
-                        onChange={(e) => setSelectedClassPrivacy(e.target.checked)}
-                        className="mt-1"
-                      />
-                      <span>אני מאשר/ת שהמורה יראה נתוני ריכוז מצרפיים בלבד (ללא וידאו או נקודות פנים).</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={handleJoinSelectedClass}
-                      disabled={isJoining || !selectedClassPrivacy}
-                      className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium disabled:opacity-50"
-                    >
-                      {isJoining && <Loader2 className="w-4 h-4 animate-spin" />}
-                      הצטרף לכיתה
-                    </button>
-                    {classActionError && <p role="alert" className="text-sm text-rose-300">{classActionError}</p>}
-                  </div>
-                )}
-
-                {selectedClass.owner_id !== currentUserId && !needsToJoin && (
-                  <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
-                    <div className="flex items-center gap-2 text-white font-bold text-lg">
-                      <VideoIcon className="w-5 h-5 text-indigo-400" />
-                      <span>סרטונים בכיתה</span>
-                    </div>
-                    {renderClassVideos(false)}
-                    {classActionError && <p role="alert" className="text-sm text-rose-300">{classActionError}</p>}
-                    {classActionMessage && <p role="status" className="text-sm text-emerald-300">{classActionMessage}</p>}
-                  </div>
-                )}
-
-                {selectedClass.role === 'teacher' && (
-                  <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-6">
-                    <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-                      <div className="flex items-center gap-2 text-white font-bold text-lg">
-                        <BarChart3 className="w-5 h-5 text-indigo-400" />
-                        <span>לוח מעקב והישגי תלמידים (מורה בלבד)</span>
-                      </div>
-                      <span className="text-xs text-slate-400">
-                        מוצגים נתונים מצרפיים בלבד (ללא וידאו או נקודות פנים)
-                      </span>
-                    </div>
-
-                    {!selectedClass.metrics || selectedClass.metrics.length === 0 ? (
-                      <p className="text-sm text-slate-400 py-4 text-center">
-                        עדיין אין נתוני צפייה עבור תלמידי כיתה זו. כאשר תלמידים יצפו בסרטונים, הנתונים יופיעו כאן אוטומטית.
-                      </p>
-                    ) : (
-                      <div className="space-y-4">
-                        {selectedClass.metrics.map((m) => (
-                          <div
-                            key={m.user_id}
-                            className="p-4 rounded-2xl bg-slate-950 border border-slate-800 space-y-3"
-                          >
-                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                              <div>
-                                <h4 className="font-bold text-white text-base">
-                                  {m.display_name}
-                                </h4>
-                                <span className="text-xs text-slate-400 font-mono">
-                                  {m.email}
-                                </span>
-                              </div>
-
-                              <div className="flex items-center gap-3">
-                                <div className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-center">
-                                  <span className="block text-[10px] text-slate-400">ריכוז ממוצע</span>
-                                  <span className="text-sm font-black font-mono text-emerald-400">
-                                    {m.average_concentration.toFixed(2)}
-                                  </span>
-                                </div>
-                                <div className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-center">
-                                  <span className="block text-[10px] text-slate-400">סשנים</span>
-                                  <span className="text-sm font-black font-mono text-white">
-                                    {m.sessions_count}
-                                  </span>
-                                </div>
-                                <div className="px-3 py-1 rounded-xl bg-slate-900 border border-slate-800 text-center">
-                                  <span className="block text-[10px] text-slate-400">תשובות נכונות</span>
-                                  <span className="text-sm font-black font-mono text-indigo-400">
-                                    {m.correct_answers_count} / {m.pauses_count}
-                                  </span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                  </>
                 )}
               </div>
             )}
@@ -873,7 +638,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
                     className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm text-left font-mono focus:outline-none focus:border-indigo-500"
                   />
                   <p className="text-[11px] text-slate-400 mt-1">
-                    רק תלמידים מרשימה זו יוכלו להצטרף לכיתה.
+                    תלמידים מרשימה זו יצטרפו מיד עם קוד הכיתה. תלמידים אחרים ישלחו בקשת הצטרפות לאישורך.
                   </p>
                 </div>
               )}
@@ -951,6 +716,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
                 </div>
                 <p className="text-xs text-slate-300 leading-relaxed">
                   בהצטרפות לכיתת מורה, המורה יוכל לצפות בנתוני הריכוז המצרפיים וההתקדמות שלך בלבד (ללא צילומי וידאו או נקודות פנים).
+                  אם המורה לא הוסיף/ה אותך מראש, תישלח אליו/ה בקשת הצטרפות לאישור.
                 </p>
 
                 <label className="flex items-start gap-2.5 pt-1 cursor-pointer">
