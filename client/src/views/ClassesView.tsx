@@ -65,6 +65,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
   const [joinCode, setJoinCode] = useState('');
   const [confirmedPrivacy, setConfirmedPrivacy] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
+  const [selectedClassPrivacy, setSelectedClassPrivacy] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [copiedCode, setCopiedCode] = useState(false);
 
@@ -217,6 +218,27 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     }
   };
 
+  // A student authorized by the teacher sees the class before joining, but the teacher
+  // only gets data for members who joined and approved the privacy notice.
+  const handleJoinSelectedClass = async () => {
+    if (!selectedClass) return;
+    setIsJoining(true);
+    setClassActionError(null);
+    try {
+      const joined = await api.joinClass({
+        join_code: selectedClass.join_code,
+        confirmed_privacy: selectedClassPrivacy,
+      });
+      setSelectedClass((current) => current ? { ...current, ...joined } : joined);
+      setClasses((current) => current.map((cls) => cls.id === joined.id ? { ...cls, ...joined } : cls));
+      setSelectedClassPrivacy(false);
+    } catch (err: any) {
+      setClassActionError(err?.message || 'שגיאה בהצטרפות לכיתה');
+    } finally {
+      setIsJoining(false);
+    }
+  };
+
   const copyToClipboard = (code: string) => {
     navigator.clipboard.writeText(code);
     setCopiedCode(true);
@@ -314,6 +336,11 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
         return gone ? [{ contentId, item: gone, unavailable: true }] : [];
       })
     : [];
+
+  const needsToJoin = !!selectedClass &&
+    selectedClass.role === 'teacher' &&
+    selectedClass.owner_id !== currentUserId &&
+    !selectedClass.member_ids.includes(currentUserId);
 
   const availableToAdd = selectedClass
     ? availableVideos.filter((item) =>
@@ -605,7 +632,38 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
                   </div>
                 )}
 
-                {selectedClass.owner_id !== currentUserId && (
+                {needsToJoin && (
+                  <div className="bg-slate-900 border border-indigo-500/30 rounded-3xl p-6 shadow-xl space-y-4">
+                    <div className="flex items-center gap-2 text-white font-bold text-lg">
+                      <KeyRound className="w-5 h-5 text-indigo-400" />
+                      <span>הצטרפות לכיתה</span>
+                    </div>
+                    <p className="text-sm text-slate-300">
+                      המורה הוסיף/ה אותך לכיתה זו. כדי לצפות בסרטוני הכיתה יש להצטרף אליה ולאשר את הצגת נתוני הריכוז.
+                    </p>
+                    <label className="flex items-start gap-2.5 text-sm text-slate-300 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={selectedClassPrivacy}
+                        onChange={(e) => setSelectedClassPrivacy(e.target.checked)}
+                        className="mt-1"
+                      />
+                      <span>אני מאשר/ת שהמורה יראה נתוני ריכוז מצרפיים בלבד (ללא וידאו או נקודות פנים).</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleJoinSelectedClass}
+                      disabled={isJoining || !selectedClassPrivacy}
+                      className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium disabled:opacity-50"
+                    >
+                      {isJoining && <Loader2 className="w-4 h-4 animate-spin" />}
+                      הצטרף לכיתה
+                    </button>
+                    {classActionError && <p role="alert" className="text-sm text-rose-300">{classActionError}</p>}
+                  </div>
+                )}
+
+                {selectedClass.owner_id !== currentUserId && !needsToJoin && (
                   <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-xl space-y-4">
                     <div className="flex items-center gap-2 text-white font-bold text-lg">
                       <VideoIcon className="w-5 h-5 text-indigo-400" />
