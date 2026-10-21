@@ -4,9 +4,10 @@
  * and privacy consent confirmation.
  */
 
-import React, { useState, useEffect } from 'react';
-import { Classroom, StudentMetric } from '../types';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Classroom, StudentMetric, Video } from '../types';
 import { api } from '../services/api';
+import { VideoCard } from '../components/VideoCard';
 import {
   Users,
   Plus,
@@ -27,6 +28,7 @@ import {
   Mail,
   Video as VideoIcon,
   Trash2,
+  Search,
 } from 'lucide-react';
 import { ContentItem } from '../types';
 
@@ -40,7 +42,9 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
   const [selectedClass, setSelectedClass] = useState<Classroom | null>(null);
   const [availableVideos, setAvailableVideos] = useState<ContentItem[]>([]);
   const [newStudentEmails, setNewStudentEmails] = useState('');
-  const [selectedVideoId, setSelectedVideoId] = useState('');
+  const [videoSearch, setVideoSearch] = useState('');
+  const [isVideoPickerOpen, setIsVideoPickerOpen] = useState(false);
+  const videoPickerRef = useRef<HTMLDivElement | null>(null);
   const [classActionMessage, setClassActionMessage] = useState<string | null>(null);
   const [classActionError, setClassActionError] = useState<string | null>(null);
   const [isUpdatingClass, setIsUpdatingClass] = useState(false);
@@ -72,6 +76,25 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
   useEffect(() => {
     fetchClasses();
   }, []);
+
+  // The add-video list shows only while the teacher is searching: close it on a click
+  // outside the search area (clicks on its "add" buttons keep it open).
+  useEffect(() => {
+    if (!isVideoPickerOpen) return;
+    const handlePointerDown = (e: PointerEvent) => {
+      if (videoPickerRef.current && !videoPickerRef.current.contains(e.target as Node)) {
+        setIsVideoPickerOpen(false);
+      }
+    };
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => document.removeEventListener('pointerdown', handlePointerDown);
+  }, [isVideoPickerOpen]);
+
+  // Switching to another class starts with a closed, empty search.
+  useEffect(() => {
+    setIsVideoPickerOpen(false);
+    setVideoSearch('');
+  }, [selectedClass?.id]);
 
   useEffect(() => {
     if (!selectedClass) {
@@ -271,19 +294,15 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     }
   };
 
-  const handleAddVideo = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedClass || !selectedVideoId) return;
+  const handleAddVideo = async (videoId: string) => {
+    if (!selectedClass) return;
 
     setIsUpdatingClass(true);
     setClassActionError(null);
     setClassActionMessage(null);
     try {
-      const video = availableVideos.find((item) => item.video.id === selectedVideoId);
-      if (!video) throw new Error('לא נמצא הסרטון שנבחר');
-      await api.addVideoToClass(selectedClass.id, `lib-${video.video.id}`);
+      await api.addVideoToClass(selectedClass.id, `lib-${videoId}`);
       setClassActionMessage('הסרטון נוסף לכיתה בהצלחה.');
-      setSelectedVideoId('');
       await loadClassDetails(selectedClass.id);
     } catch (err: any) {
       setClassActionError(err?.message || 'לא ניתן להוסיף את הסרטון לכיתה');
@@ -307,24 +326,23 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     }
   };
 
-    const handleReuploadVideo = async (youtubeId: string) => {
-    if (!selectedClass) return;
-    setIsUpdatingClass(true);
-    setClassActionError(null);
-    setClassActionMessage(null);
-    try {
-      // The server reuses the old video id, so the class reference works again.
-      await api.addContent(youtubeId);
-      const items = await api.getContent({ scope: 'all' });
-      setAvailableVideos(items);
-      await loadClassDetails(selectedClass.id);
-      setClassActionMessage('הסרטון הועלה מחדש ועובר עיבוד.');
-    } catch (err: any) {
-      setClassActionError(err?.message || 'לא ניתן להעלות את הסרטון מחדש');
-    } finally {
-      setIsUpdatingClass(false);
-    }
-  };
+  // VideoCard reports status changes (processing finished, or a deleted video was
+  // re-uploaded, which keeps its old id) so the class list stays current.
+  const handleClassVideoUpdated = useCallback((updated: Video) => {
+    setAvailableVideos((prev) =>
+      prev.some((it) => it.video.id === updated.id)
+        ? prev.map((it) => (it.video.id === updated.id ? { ...it, video: updated } : it))
+        : [{
+            id: `lib-${updated.id}`,
+            user_id: currentUserId,
+            video_id: updated.id,
+            video: updated,
+            created_at: updated.created_at,
+          }, ...prev]
+    );
+  }, [currentUserId]);
+
+  const watchClassVideo = (item: ContentItem) => onWatchVideo({ ...item, id: `lib-${item.video.id}` });
 
      const classVideos = selectedClass
     ? selectedClass.content_ids.flatMap((contentId) => {
@@ -342,12 +360,46 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     selectedClass.owner_id !== currentUserId &&
     !selectedClass.member_ids.includes(currentUserId);
 
+  // Same matching as the library search: title or category contains the query.
+  const videoQuery = videoSearch.trim().toLowerCase();
   const availableToAdd = selectedClass
     ? availableVideos.filter((item) =>
         !selectedClass.content_ids.includes(item.id) &&
-        !selectedClass.content_ids.includes(`lib-${item.video.id}`)
+        !selectedClass.content_ids.includes(`lib-${item.video.id}`) &&
+        (!videoQuery ||
+          item.video.title.toLowerCase().includes(videoQuery) ||
+          item.video.categories.some((cat) => cat.toLowerCase().includes(videoQuery)))
       )
     : [];
+
+  const renderClassVideos = (canRemove: boolean) =>
+    classVideos.length === 0 ? (
+      <p className="text-sm text-slate-400">עדיין לא נוספו סרטונים לכיתה.</p>
+    ) : (
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {classVideos.map(({ contentId, item }) => (
+          <div key={contentId} className="relative">
+            <VideoCard
+              contentItem={{ ...item, id: `lib-${item.video.id}` }}
+              onWatch={watchClassVideo}
+              onVideoUpdated={handleClassVideoUpdated}
+            />
+            {canRemove && (
+              <button
+                type="button"
+                onClick={() => handleRemoveVideo(contentId)}
+                disabled={isUpdatingClass}
+                className="absolute top-3 left-3 p-2 rounded-lg bg-slate-950/80 text-slate-300 hover:text-rose-300 hover:bg-rose-500/20 backdrop-blur-sm disabled:opacity-50"
+                title="הסר סרטון מהכיתה"
+                aria-label={`הסר את ${item.video.title} מהכיתה`}
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    );
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8 animate-fade-in">
@@ -557,74 +609,62 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
                         <VideoIcon className="w-5 h-5 text-indigo-400" />
                         <span>סרטונים בכיתה</span>
                       </div>
-                      <form onSubmit={handleAddVideo} className="flex flex-col sm:flex-row gap-3">
-                        <select
-                          value={selectedVideoId}
-                          onChange={(e) => setSelectedVideoId(e.target.value)}
-                          className="flex-1 px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-indigo-500"
-                        >
-                          <option value="">בחר סרטון מהספרייה שלך</option>
-                          {availableToAdd.map((item) => (
-                            <option key={item.video.id} value={item.video.id}>{item.video.title}</option>
-                          ))}
-                        </select>
-                        <button
-                          type="submit"
-                          disabled={isUpdatingClass || !selectedVideoId}
-                          className="flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium disabled:opacity-50"
-                        >
-                          <Plus className="w-4 h-4" />
-                          הוסף סרטון
-                        </button>
-                      </form>
-                      {classVideos.length === 0 ? (
-                        <p className="text-sm text-slate-400">עדיין לא נוספו סרטונים לכיתה.</p>
-                      ) : (
-                        <ul className="space-y-2">
-                                                    {classVideos.map(({ contentId, item, unavailable }) => (
-                            <li key={contentId} className="flex items-center justify-between gap-3 rounded-xl bg-slate-950 border border-slate-800 px-4 py-3">
-                              {unavailable ? (
-                                <div className="text-right">
-                                  <p className="text-sm text-slate-400 line-through">{item.video.title}</p>
-                                  <p className="text-xs text-amber-300">הסרטון אינו זמין עקב מחיקה</p>
+                      <div
+                        ref={videoPickerRef}
+                        className="space-y-2"
+                        onKeyDown={(e) => { if (e.key === 'Escape') setIsVideoPickerOpen(false); }}
+                      >
+                        <div className="relative">
+                          <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                          <input
+                            type="text"
+                            value={videoSearch}
+                            onChange={(e) => { setVideoSearch(e.target.value); setIsVideoPickerOpen(true); }}
+                            onFocus={() => setIsVideoPickerOpen(true)}
+                            placeholder="חיפוש סרטון בכל הספרייה לפי כותרת או נושא..."
+                            aria-label="חיפוש סרטון להוספה לכיתה"
+                            className="w-full pr-10 pl-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm placeholder-slate-500 focus:outline-none focus:border-indigo-500"
+                          />
+                        </div>
+                        {!isVideoPickerOpen ? null : !availableLoaded ? (
+                          <p className="text-xs text-slate-400 flex items-center gap-2">
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            טוען את ספריית הסרטונים...
+                          </p>
+                        ) : availableToAdd.length === 0 ? (
+                          <p className="text-xs text-slate-400">
+                            {videoQuery ? 'לא נמצאו סרטונים תואמים בספרייה.' : 'כל סרטוני הספרייה כבר נמצאים בכיתה.'}
+                          </p>
+                        ) : (
+                          <ul className="max-h-72 overflow-y-auto space-y-2 rounded-xl border border-slate-800 bg-slate-950/60 p-2">
+                            {availableToAdd.map((item) => (
+                              <li key={item.video.id} className="flex items-center gap-3 rounded-lg p-1.5 hover:bg-slate-800/60">
+                                <img
+                                  src={`https://img.youtube.com/vi/${item.video.youtube_id}/mqdefault.jpg`}
+                                  alt=""
+                                  loading="lazy"
+                                  className="w-24 aspect-video shrink-0 rounded-md object-cover bg-slate-900"
+                                />
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-white line-clamp-2" title={item.video.title}>{item.video.title}</p>
+                                  <p className="text-xs text-indigo-300 truncate">{item.video.categories.join(' · ')}</p>
                                 </div>
-                              ) : (
                                 <button
                                   type="button"
-                                  onClick={() => onWatchVideo({ ...item, id: `lib-${item.video.id}` })}
-                                  className="text-sm text-right text-slate-200 hover:text-indigo-300"
+                                  onClick={() => handleAddVideo(item.video.id)}
+                                  disabled={isUpdatingClass}
+                                  className="shrink-0 flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium disabled:opacity-50"
+                                  aria-label={`הוסף את ${item.video.title} לכיתה`}
                                 >
-                                  {item.video.title}
+                                  <Plus className="w-3.5 h-3.5" />
+                                  הוסף
                                 </button>
-                              )}
-                              <div className="flex items-center gap-2">
-                                {unavailable && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleReuploadVideo(item.video.youtube_id)}
-                                    disabled={isUpdatingClass}
-                                    className="px-3 py-1.5 rounded-lg text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 disabled:opacity-50"
-                                  >
-                                    העלה מחדש
-                                  </button>
-                                )}
-                                {selectedClass.owner_id === currentUserId && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveVideo(contentId)}
-                                    disabled={isUpdatingClass}
-                                    className="p-2 rounded-lg text-slate-400 hover:text-rose-300 hover:bg-rose-500/10 disabled:opacity-50"
-                                    title="הסר סרטון מהכיתה"
-                                    aria-label={`הסר את ${item.video.title} מהכיתה`}
-                                  >
-                                    <Trash2 className="w-4 h-4" />
-                                  </button>
-                                )}
-                              </div>
-                            </li>
-                          ))}
-                        </ul>
-                      )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                      {renderClassVideos(true)}
                     </div>
 
                     {classActionError && <p role="alert" className="text-sm text-rose-300">{classActionError}</p>}
@@ -669,40 +709,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
                       <VideoIcon className="w-5 h-5 text-indigo-400" />
                       <span>סרטונים בכיתה</span>
                     </div>
-                    {classVideos.length === 0 ? (
-                      <p className="text-sm text-slate-400">עדיין לא נוספו סרטונים לכיתה.</p>
-                    ) : (
-                      <ul className="space-y-2">
-                        {classVideos.map(({ contentId, item, unavailable }) => (
-                          <li key={contentId} className="flex items-center justify-between gap-3 rounded-xl bg-slate-950 border border-slate-800 px-4 py-3">
-                            {unavailable ? (
-                              <div className="text-right">
-                                <p className="text-sm text-slate-400 line-through">{item.video.title}</p>
-                                <p className="text-xs text-amber-300">הסרטון אינו זמין עקב מחיקה</p>
-                              </div>
-                            ) : (
-                              <button
-                                type="button"
-                                onClick={() => onWatchVideo({ ...item, id: `lib-${item.video.id}` })}
-                                className="text-sm text-right text-slate-200 hover:text-indigo-300"
-                              >
-                                {item.video.title}
-                              </button>
-                            )}
-                            {unavailable && (
-                              <button
-                                type="button"
-                                onClick={() => handleReuploadVideo(item.video.youtube_id)}
-                                disabled={isUpdatingClass}
-                                className="px-3 py-1.5 rounded-lg text-xs font-medium text-amber-300 bg-amber-500/10 border border-amber-500/30 hover:bg-amber-500/20 disabled:opacity-50"
-                              >
-                                העלה מחדש
-                              </button>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+                    {renderClassVideos(false)}
                     {classActionError && <p role="alert" className="text-sm text-rose-300">{classActionError}</p>}
                     {classActionMessage && <p role="status" className="text-sm text-emerald-300">{classActionMessage}</p>}
                   </div>

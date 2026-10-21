@@ -345,7 +345,7 @@ async def add_video_to_class(
 
     video = await db.videos.find_one({"id": video_id}) if video_id else None
     if not video:
-        raise HTTPException(status_code=404, detail={"message": "הסרטון לא נמצא בספרייה שלך"})
+        raise HTTPException(status_code=404, detail={"message": "הסרטון לא נמצא בספרייה"})
     
 
     await db.classes.update_one(
