@@ -37,7 +37,8 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onWatchVideo }) => {
   }, []);
 
   const handleVideoAdded = (newItem: ContentItem) => {
-    setItems((prev) => [newItem, ...prev]);
+    // An already-existing video comes back from the server as the same item: move it to the top instead of duplicating it.
+    setItems((prev) => [newItem, ...prev.filter((it) => it.video.id !== newItem.video.id)]);
   };
 
   const handleVideoDeleted = (deletedContentId: string) => {

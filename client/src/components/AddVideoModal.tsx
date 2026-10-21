@@ -18,6 +18,7 @@ export const AddVideoModal: React.FC<AddVideoModalProps> = ({ isOpen, onClose, o
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successInfo, setSuccessInfo] = useState<string | null>(null);
+  const [existsInfo, setExistsInfo] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
@@ -31,11 +32,14 @@ export const AddVideoModal: React.FC<AddVideoModalProps> = ({ isOpen, onClose, o
     setIsLoading(true);
     setError(null);
     setSuccessInfo(null);
+    setExistsInfo(null);
 
     try {
       const res = await api.addContent(url.trim());
-      
-      if (res.video.status === 'questions_failed') {
+
+      if (res.already_exists) {
+        setExistsInfo('הסרטון כבר קיים במערכת.');
+      } else if (res.video.status === 'questions_failed') {
         const reasonMsg = getHebrewFailureReason(res.video.failure_reason);
         setSuccessInfo(`הסרטון נוסף בהצלחה עם תווית "פגום": ${reasonMsg}`);
       } else {
@@ -102,6 +106,13 @@ export const AddVideoModal: React.FC<AddVideoModalProps> = ({ isOpen, onClose, o
             <div className="flex items-start gap-2.5 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-sm">
               <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
               <span>{successInfo}</span>
+            </div>
+          )}
+
+          {existsInfo && (
+            <div className="flex items-start gap-2.5 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-sm">
+              <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+              <span>{existsInfo}</span>
             </div>
           )}
 

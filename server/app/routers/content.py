@@ -60,7 +60,8 @@ async def add_content(
             user_id=user_id,
             video_id=video_id,
             video=VideoModel(**existing_video),
-            created_at=now
+            created_at=now,
+            already_exists=True
         )
 
     # Video does not exist yet. If it was deleted before, reuse its old id so
