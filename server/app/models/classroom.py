@@ -40,6 +40,20 @@ class StudentMetric(BaseModel):
     timeline_readings: List[dict] = []  # timestamp, score
 
 
+class ClassMember(BaseModel):
+    user_id: str
+    display_name: str
+    email: str = ""  # only filled in for the class owner (and for the member themself)
+    is_owner: bool = False
+
+
+class JoinRequestInfo(BaseModel):
+    user_id: str
+    display_name: str
+    email: str
+    requested_at: datetime
+
+
 class ClassResponse(BaseModel):
     id: str
     owner_id: str
@@ -50,6 +64,11 @@ class ClassResponse(BaseModel):
     join_code: str
     content_ids: List[str] = []
     member_ids: List[str] = []
-    authorized_students: List[str] = []
+    authorized_students: List[str] = []  # owner only
     created_at: datetime
+    # The current user's relation to the class: "owner" | "member" | "invited" | "pending" | "none"
+    membership: str = "none"
+    member_count: int = 0
+    members: List[ClassMember] = []  # filled in on the class details endpoints
+    join_requests: List[JoinRequestInfo] = []  # owner only
     metrics: Optional[List[StudentMetric]] = None
