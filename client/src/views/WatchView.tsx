@@ -39,6 +39,10 @@ interface WatchViewProps {
 
 export const WatchView: React.FC<WatchViewProps> = ({ contentItem, onSessionEnded }) => {
   const { video } = contentItem;
+  const totalQuestions = video.segments?.reduce(
+    (total, segment) => total + segment.questions.length,
+    0
+  ) ?? 0;
 
   // Session state
   const [session, setSession] = useState<Session | null>(null);
@@ -53,6 +57,7 @@ export const WatchView: React.FC<WatchViewProps> = ({ contentItem, onSessionEnde
   // Pause / Question state
   const [isPausedByTracker, setIsPausedByTracker] = useState(false);
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
+  const [questionNumber, setQuestionNumber] = useState(0);
   const [currentSegment, setCurrentSegment] = useState<VideoSegment | null>(null);
   const [isGenericFallback, setIsGenericFallback] = useState(false);
   const [answeredQuestionIds] = useState<Set<string>>(new Set());
@@ -128,6 +133,7 @@ export const WatchView: React.FC<WatchViewProps> = ({ contentItem, onSessionEnde
       const newSession = await api.createSession(contentItem.id);
       setSession(newSession);
       setIsSessionActive(true);
+      setQuestionNumber(0);
 
       // Play video
       if (ytPlayerRef.current && ytPlayerRef.current.playVideo) {
@@ -293,6 +299,7 @@ export const WatchView: React.FC<WatchViewProps> = ({ contentItem, onSessionEnde
 
     answeredQuestionIds.add(chosen.question);
 
+    setQuestionNumber((number) => number + 1);
     setIsGenericFallback(false);
     setCurrentSegment(targetSegment);
     setCurrentQuestion(chosen);
@@ -587,6 +594,8 @@ export const WatchView: React.FC<WatchViewProps> = ({ contentItem, onSessionEnde
       <QuestionModal
         isOpen={isPausedByTracker}
         question={currentQuestion}
+        questionNumber={questionNumber}
+        totalQuestions={totalQuestions}
         segmentTitle={currentSegment?.title}
         isGenericFallback={isGenericFallback}
         onAnswerSelected={handleAnswerSelected}

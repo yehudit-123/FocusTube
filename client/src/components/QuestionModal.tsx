@@ -11,6 +11,8 @@ import { Brain, CheckCircle2, XCircle, RotateCcw, ArrowRight, HelpCircle } from 
 interface QuestionModalProps {
   isOpen: boolean;
   question: Question | null;
+  questionNumber: number;
+  totalQuestions: number;
   segmentTitle?: string;
   isGenericFallback?: boolean; // For videos with questions_failed
   onAnswerSelected: (selectedIndex: number, isCorrect: boolean) => void;
@@ -21,6 +23,8 @@ interface QuestionModalProps {
 export const QuestionModal: React.FC<QuestionModalProps> = ({
   isOpen,
   question,
+  questionNumber,
+  totalQuestions,
   segmentTitle,
   isGenericFallback = false,
   onAnswerSelected,
@@ -114,7 +118,7 @@ export const QuestionModal: React.FC<QuestionModalProps> = ({
           </div>
 
           <div className="px-3 py-1 rounded-full text-xs font-medium bg-amber-500/10 text-amber-300 border border-amber-500/20">
-            שאלה 1 מתוך 1
+            {questionNumber}/{totalQuestions}
           </div>
         </div>
 
