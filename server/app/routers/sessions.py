@@ -17,6 +17,7 @@ from server.app.models.session import (
 from server.app.services.auth_service import get_current_user
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+PAUSE_POSITION_MATCH_TOLERANCE_SECONDS = 5
 
 
 @router.post("", status_code=status.HTTP_201_CREATED, response_model=SessionResponse)
@@ -158,6 +159,33 @@ async def record_pause_event(
         "is_correct": req.is_correct,
         "action_taken": req.action_taken
     }
+
+    if req.question is not None and req.is_correct is not None:
+        result = await db.sessions.update_one(
+            {
+                "id": session_id,
+                "pause_events": {
+                    "$elemMatch": {
+                        "question": req.question,
+                        "action_taken": "question_prompted",
+                        "position_seconds": {
+                            "$gte": req.position_seconds - PAUSE_POSITION_MATCH_TOLERANCE_SECONDS,
+                            "$lte": req.position_seconds + PAUSE_POSITION_MATCH_TOLERANCE_SECONDS
+                        }
+                    }
+                }
+            },
+            {
+                "$set": {
+                    "pause_events.$.is_correct": req.is_correct,
+                    "pause_events.$.selected_option_index": req.selected_option_index,
+                    "pause_events.$.correct_option_index": req.correct_option_index,
+                    "pause_events.$.action_taken": req.action_taken
+                }
+            }
+        )
+        if result.matched_count:
+            return {"status": "ok"}
 
     await db.sessions.update_one(
         {"id": session_id},
