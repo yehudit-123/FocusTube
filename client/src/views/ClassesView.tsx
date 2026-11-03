@@ -1,10 +1,5 @@
-/**
- * FocusTube - Classrooms View (כיתות לימוד)
- * Supports student collections, teacher dashboards, invite codes, join requests
- * and privacy consent confirmation.
- */
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
 import { Classroom, ContentItem, Video } from '../types';
 import { api } from '../services/api';
 import { useAutoRefresh, keepIfSame } from '../hooks/useAutoRefresh';
@@ -34,6 +29,8 @@ interface ClassesViewProps {
 }
 
 export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatchVideo }) => {
+  const navigate = useNavigate();
+  const { classId } = useParams<{ classId: string }>();
   const [classes, setClasses] = useState<Classroom[]>([]);
   const [selectedClass, setSelectedClass] = useState<Classroom | null>(null);
   const [activeTab, setActiveTab] = useState<ClassTabId>('videos');
@@ -71,6 +68,14 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
   useEffect(() => {
     fetchClasses();
   }, []);
+
+  useEffect(() => {
+    if (isLoading) return;
+    const targetClassId = classId || classes[0]?.id;
+    if (targetClassId && selectedClass?.id !== targetClassId) {
+      loadClassDetails(targetClassId);
+    }
+  }, [classId, classes, isLoading, selectedClass?.id]);
 
   // Another class starts on the videos tab with no leftover messages.
   useEffect(() => {
@@ -148,9 +153,6 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     try {
       const data = await api.getClasses();
       setClasses(data);
-      if (data.length > 0) {
-        loadClassDetails(data[0].id);
-      }
     } catch (err: any) {
       setError(err?.message || 'אירעה שגיאה בטעינת הכיתות');
     } finally {
@@ -252,6 +254,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
 
       setClasses((prev) => [created, ...prev]);
       setSelectedClass(created);
+      navigate(`/classes/${created.id}`);
       setIsCreateModalOpen(false);
       setClassName('');
       setAuthorizedEmailsStr('');
@@ -279,6 +282,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
 
       setClasses((prev) => [joined, ...prev.filter((cls) => cls.id !== joined.id)]);
       setSelectedClass(joined);
+      navigate(`/classes/${joined.id}`);
       setIsJoinModalOpen(false);
       setJoinCode('');
       setConfirmedPrivacy(false);
@@ -481,7 +485,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
                 return (
                   <div
                     key={cls.id}
-                    onClick={() => loadClassDetails(cls.id)}
+                    onClick={() => navigate(`/classes/${cls.id}`)}
                     className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-3 ${
                       isSelected
                         ? 'bg-indigo-600/15 border-indigo-500/60 shadow-lg shadow-indigo-600/10'
