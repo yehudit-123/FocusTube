@@ -2,9 +2,10 @@
  * FocusTube - Library View (כל הסרטונים)
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { ContentItem } from '../types';
 import { api } from '../services/api';
+import { useAutoRefresh, keepIfSame } from '../hooks/useAutoRefresh';
 import { VideoCard } from '../components/VideoCard';
 import { AddVideoModal } from '../components/AddVideoModal';
 import { Search, Plus, Loader2, Sparkles, AlertCircle, BookOpen } from 'lucide-react';
@@ -33,16 +34,19 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onWatchVideo }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('הכל');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  // The last submitted filter: the auto-refresh uses it, not the text still being typed.
+  const submittedFilterRef = useRef<{ search: string; category?: string } | null>(null);
 
   const fetchVideos = async () => {
+    const filter = {
+      search: searchQuery,
+      category: selectedCategory === 'הכל' ? undefined : selectedCategory,
+    };
+    submittedFilterRef.current = filter;
     setIsLoading(true);
     setError(null);
     try {
-      const data = await api.getContent({
-        scope: 'all',
-        search: searchQuery,
-        category: selectedCategory === 'הכל' ? undefined : selectedCategory,
-      });
+      const data = await api.getContent({ scope: 'all', ...filter });
       setItems(data);
     } catch (err: any) {
       setError(err?.message || 'אירעה שגיאה בטעינת ספריית הסרטונים');
@@ -54,6 +58,17 @@ export const LibraryView: React.FC<LibraryViewProps> = ({ onWatchVideo }) => {
   useEffect(() => {
     fetchVideos();
   }, [selectedCategory]);
+
+  // Silent refresh: no spinner, and errors are left for the next tick.
+  useAutoRefresh(async () => {
+    const filter = submittedFilterRef.current;
+    if (!filter || isLoading) return;
+    const data = await api.getContent({ scope: 'all', ...filter });
+    // A newer search was submitted meanwhile: its own fetch owns the list.
+    if (submittedFilterRef.current !== filter) return;
+    setItems((prev) => keepIfSame(prev, data));
+    setError(null);
+  }, { enabled: !isAddModalOpen });
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();

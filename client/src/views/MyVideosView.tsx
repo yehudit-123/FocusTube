@@ -5,6 +5,7 @@
 import React, { useState, useEffect } from 'react';
 import { ContentItem } from '../types';
 import { api } from '../services/api';
+import { useAutoRefresh, keepIfSame } from '../hooks/useAutoRefresh';
 import { VideoCard } from '../components/VideoCard';
 import { AddVideoModal } from '../components/AddVideoModal';
 import { Plus, Loader2, Video as VideoIcon, AlertCircle } from 'lucide-react';
@@ -35,6 +36,14 @@ export const MyVideosView: React.FC<MyVideosViewProps> = ({ onWatchVideo }) => {
   useEffect(() => {
     fetchMyVideos();
   }, []);
+
+  // Silent refresh: no spinner, and errors are left for the next tick.
+  useAutoRefresh(async () => {
+    if (isLoading) return;
+    const data = await api.getContent({ scope: 'mine' });
+    setItems((prev) => keepIfSame(prev, data));
+    setError(null);
+  }, { enabled: !isAddModalOpen });
 
   const handleVideoAdded = (newItem: ContentItem) => {
     // An already-existing video comes back from the server as the same item: move it to the top instead of duplicating it.
