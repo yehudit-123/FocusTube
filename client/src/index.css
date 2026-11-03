@@ -1,1 +1,35 @@
 @import "tailwindcss";
+
+.loading-eye {
+  width: 6rem;
+  height: 4.5rem;
+}
+
+.loading-eye .eye-open {
+  animation: focustube-open 3s infinite;
+}
+
+.loading-eye .eye-closed {
+  opacity: 0;
+  animation: focustube-closed 3s infinite;
+}
+
+/* עין פתוחה: נעלמת בזמן המצמוץ */
+@keyframes focustube-open {
+  0%, 44%   { opacity: 1; }
+  45%, 52%  { opacity: 0; }
+  53%, 100% { opacity: 1; }
+}
+
+/* עין עצומה: מופיעה בזמן המצמוץ, והריסים יורדים מעט כמו עפעף */
+@keyframes focustube-closed {
+  0%, 44%   { opacity: 0; transform: translateY(-6px); }
+  46%       { opacity: 1; transform: translateY(0); }
+  51%       { opacity: 1; transform: translateY(0); }
+  52%, 100% { opacity: 0; transform: translateY(-6px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-eye .eye-open { animation: none; opacity: 1; }
+  .loading-eye .eye-closed { animation: none; opacity: 0; }
+}
