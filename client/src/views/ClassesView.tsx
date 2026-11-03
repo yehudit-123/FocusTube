@@ -4,9 +4,10 @@
  * and privacy consent confirmation.
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Classroom, ContentItem, Video } from '../types';
 import { api } from '../services/api';
+import { useAutoRefresh, keepIfSame } from '../hooks/useAutoRefresh';
 import { ClassHeader } from '../components/classes/ClassHeader';
 import { ClassTabs, ClassTab } from '../components/classes/ClassTabs';
 import { ClassVideosTab, ClassVideoEntry } from '../components/classes/ClassVideosTab';
@@ -62,6 +63,10 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
   const [confirmedPrivacy, setConfirmedPrivacy] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   const [joinError, setJoinError] = useState<string | null>(null);
+
+  // Bumped when a user action starts, so an auto-refresh already in flight drops its
+  // (older) result instead of overwriting the action's result.
+  const actionVersionRef = useRef(0);
 
   useEffect(() => {
     fetchClasses();
@@ -164,6 +169,39 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     }
   };
 
+  // Silent refresh of the class list, the selected class (incl. teacher metrics) and the
+  // available videos. Unlike fetchClasses/loadClassDetails it never changes which class is
+  // selected (except dropping one that is gone) and never touches loading/error/message state.
+  const refreshClassesSilently = async () => {
+    if (isLoading || isUpdatingClass || isJoining || isCreating) return;
+    const actionVersion = actionVersionRef.current;
+    const isStale = () => actionVersionRef.current !== actionVersion;
+
+    const data = await api.getClasses();
+    if (isStale()) return;
+    setClasses((prev) => keepIfSame(prev, data));
+
+    const selectedId = selectedClass?.id;
+    if (!selectedId) return;
+
+    const [details, items] = await Promise.all([
+      // Deleted class or lost access: drop the selection.
+      api.getClass(selectedId).catch(() => null),
+      api.getContent({ scope: 'all' }).catch(() => null),
+    ]);
+    if (isStale()) return;
+    setSelectedClass((prev) => {
+      if (prev?.id !== selectedId) return prev; // the user picked another class meanwhile
+      return details ? keepIfSame(prev, details) : null;
+    });
+    if (details && items) {
+      setAvailableVideos((prev) => keepIfSame(prev, items));
+      setAvailableLoaded(true);
+    }
+  };
+
+  useAutoRefresh(refreshClassesSilently, { enabled: !isCreateModalOpen && !isJoinModalOpen });
+
   // Keep the selected class and its entry in the side list in sync.
   const applyClassUpdate = (updated: Classroom) => {
     setSelectedClass(updated);
@@ -177,6 +215,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     fallbackError: string
   ): Promise<boolean> => {
     if (!selectedClass) return false;
+    actionVersionRef.current++;
     setIsUpdatingClass(true);
     setClassActionError(null);
     setClassActionMessage(null);
@@ -196,6 +235,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     e.preventDefault();
     if (!className.trim()) return;
 
+    actionVersionRef.current++;
     setIsCreating(true);
     try {
       const emails = authorizedEmailsStr
@@ -226,6 +266,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
     e.preventDefault();
     if (!joinCode.trim()) return;
 
+    actionVersionRef.current++;
     setIsJoining(true);
     setJoinError(null);
 
@@ -252,6 +293,7 @@ export const ClassesView: React.FC<ClassesViewProps> = ({ currentUserId, onWatch
   // only gets data for members who joined and approved the privacy notice.
   const handleJoinSelectedClass = async (privacyConfirmed: boolean) => {
     if (!selectedClass) return;
+    actionVersionRef.current++;
     setIsJoining(true);
     setClassActionError(null);
     try {
