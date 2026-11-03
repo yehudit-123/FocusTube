@@ -14,7 +14,6 @@ import { WatchView } from './views/WatchView';
 import { HistoryView } from './views/HistoryView';
 import { ClassesView } from './views/ClassesView';
 import { ProfileModal } from './views/ProfileModal';
-import { Loader2 } from 'lucide-react';
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -68,7 +67,7 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await api.logout();
-    } catch {}
+    } catch { }
     removeStoredToken();
     setCurrentUser(null);
     setWatchingContentItem(null);
@@ -85,8 +84,35 @@ export default function App() {
 
   if (isAuthChecking) {
     return (
-      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400 gap-3">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-400 gap-5" role="status" aria-live="polite">
+        <svg
+  className="loading-eye text-white"
+  viewBox="0 0 120 90"
+  fill="none"
+  xmlns="http://www.w3.org/2000/svg"
+  aria-hidden="true"
+  stroke="currentColor"
+  strokeWidth="4"
+  strokeLinecap="round"
+  strokeLinejoin="round"
+>
+  {/* עין פתוחה */}
+  <g className="eye-open">
+    <path d="M10 55C26 35 42 29 60 29s34 6 50 26C94 75 78 81 60 81S26 75 10 55Z" />
+    <circle cx="60" cy="55" r="16" />
+    <circle cx="60" cy="55" r="8" fill="currentColor" stroke="none" />
+    <circle cx="65" cy="50" r="3" fill="#020617" stroke="none" />
+    {/* ריסים כלפי מעלה */}
+    <path d="M28 39L18 27M44 32L38 17M60 29V14M76 32L82 17M92 39L102 27" />
+  </g>
+
+  {/* עין עצומה */}
+  <g className="eye-closed">
+    <path d="M10 50C30 70 90 70 110 50" />
+    {/* ריסים כלפי מטה */}
+    <path d="M24 59L16 69M42 65L38 77M60 68V80M78 65L82 77M96 59L104 69" />
+  </g>
+</svg>
         <p className="text-sm">טוען את FocusTube...</p>
       </div>
     );
